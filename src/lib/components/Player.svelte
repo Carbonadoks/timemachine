@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { Stage } from '$lib/animator';
@@ -25,6 +26,40 @@
 		history.attach(stage);
 		return () => history.detach();
 	});
+
+	// Wiki links in the replay open the linked article's time machine at the same moment.
+	const OFFSITE = /^(special|help|wikipedia|wp|portal|talk|template|category|file|image|media|user|mediawiki|module|draft|timedtext|wikt|wiktionary|commons|meta|species|voy)( talk)?:|^[^:]+ talk:/i;
+	function prepLink(a: HTMLAnchorElement) {
+		const page = (a.dataset.target ?? '').replace(/#.*$/, '').trim();
+		const path = encodeURIComponent(page.replace(/ /g, '_')).replace(/%2F/g, '/').replace(/%3A/g, ':');
+		if (OFFSITE.test(page)) {
+			a.href = `https://${history.lang}.wikipedia.org/wiki/${path}`;
+			a.target = '_blank';
+			a.rel = 'noopener';
+			return false;
+		}
+		const q = new URLSearchParams();
+		if (history.lang !== 'en') q.set('lang', history.lang);
+		q.set('view', 'history');
+		const ts = history.current?.timestamp;
+		if (ts) q.set('at', ts);
+		a.href = `/wiki/${path}?${q}`;
+		return true;
+	}
+	const linkOf = (e: Event) => (e.target as Element).closest?.<HTMLAnchorElement>('a.tm-link') ?? null;
+	function onLinkClick(e: MouseEvent) {
+		const a = linkOf(e);
+		if (!a) return;
+		const inside = prepLink(a);
+		if (!inside || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // new tab / offsite: browser default
+		e.preventDefault();
+		history.pause();
+		goto(a.href.slice(location.origin.length));
+	}
+	function onLinkHover(e: Event) {
+		const a = linkOf(e);
+		if (a) prepLink(a); // so the status bar and "copy link" show the real URL
+	}
 
 	const cur = $derived(history.current);
 	const comment = $derived(cur ? cleanComment(cur.comment) : null);
@@ -77,6 +112,8 @@
 							{#if history.plan.wordsAdded}<span class="s-add">+{history.plan.wordsAdded} words</span>{/if}
 							{#if history.plan.wordsRemoved}<span class="s-del">−{history.plan.wordsRemoved} words</span>{/if}
 							{#if history.plan.fixes}<span class="s-fix">✦ {history.plan.fixes} fix{history.plan.fixes > 1 ? 'es' : ''}</span>{/if}
+							{#if history.plan.linksAdded}<span class="s-link">+{history.plan.linksAdded} link{history.plan.linksAdded > 1 ? 's' : ''}</span>{/if}
+							{#if history.plan.linksRemoved}<span class="s-unlink">−{history.plan.linksRemoved} link{history.plan.linksRemoved > 1 ? 's' : ''}</span>{/if}
 							{#if !history.plan.changed}<span class="s-none">no visible text change</span>{/if}
 						</div>
 					{/if}
@@ -90,7 +127,8 @@
 
 <div class="player">
 	<div class="stage-wrap">
-		<div class="stage" bind:this={root}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="stage" bind:this={root} onclick={onLinkClick} onauxclick={onLinkClick} onpointerover={onLinkHover} onfocusin={onLinkHover}>
 			<div class="tm-content" bind:this={content}></div>
 		</div>
 
@@ -318,6 +356,12 @@
 	}
 	.s-fix {
 		color: var(--tm-spark);
+	}
+	.s-link {
+		color: var(--tm-link);
+	}
+	.s-unlink {
+		color: var(--tm-del);
 	}
 	.s-none {
 		color: var(--muted);

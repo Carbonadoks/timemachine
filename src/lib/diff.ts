@@ -1,5 +1,6 @@
 import { isMath } from './math';
 import type { Block } from './wikitext';
+import type { Link } from './links';
 
 type Edit = [kind: 0 | 1 | 2, ai: number, bi: number]; // 0 = equal, 1 = delete, 2 = insert
 
@@ -159,7 +160,69 @@ export type BlockPlan =
 	| { kind: 'keep'; from: number; to: number }
 	| { kind: 'del'; from: number }
 	| { kind: 'ins'; to: number }
-	| { kind: 'mod'; from: number; to: number; words: WordOp[] };
+	| { kind: 'mod'; from: number; to: number; words: WordOp[]; links: LinkDiff };
+
+/** Links that appeared on / disappeared from text that stayed put. Both in new-text coordinates. */
+export interface LinkDiff {
+	/** Indices into the new block's `links`. */
+	added: number[];
+	/** Old links whose (surviving) text is now plain; `target` is the old target. */
+	removed: Link[];
+}
+
+/**
+ * Compare the links of two versions of a block. Links on freshly typed text are
+ * not "added" here: the insertion animation already covers them.
+ */
+export function diffLinks(a: Block, b: Block, words: WordOp[]): LinkDiff {
+	const out: LinkDiff = { added: [], removed: [] };
+	if (!a.links?.length && !b.links?.length) return out;
+	const oldOf = new Int32Array(b.text.length + 1).fill(-1);
+	const newOf = new Int32Array(a.text.length + 1).fill(-1);
+	let o = 0;
+	let n = 0;
+	for (const w of words) {
+		if (w.t === 'eq') {
+			for (let k = 0; k < w.text.length; k++) {
+				oldOf[n + k] = o + k;
+				newOf[o + k] = n + k;
+			}
+			o += w.text.length;
+			n += w.text.length;
+		} else if (w.t === 'del') o += w.text.length;
+		else if (w.t === 'ins') n += w.text.length;
+		else {
+			o += w.from.length;
+			n += w.to.length;
+		}
+	}
+	const covers = (links: Link[] | undefined, i: number, target?: string) =>
+		!!links?.some((l) => l.start <= i && i < l.end && (target === undefined || l.target === target));
+
+	b.links?.forEach((l, idx) => {
+		let kept = false;
+		let stayed = false;
+		for (let i = l.start; i < l.end && !kept; i++) {
+			if (oldOf[i] < 0) continue;
+			stayed = true;
+			kept = covers(a.links, oldOf[i], l.target);
+		}
+		if (stayed && !kept) out.added.push(idx);
+	});
+	for (const l of a.links ?? []) {
+		let start = -1;
+		let end = -1;
+		for (let i = l.start; i < l.end; i++) {
+			const j = newOf[i];
+			if (j < 0 || covers(b.links, j)) continue;
+			if (start < 0) start = j;
+			end = j + 1;
+		}
+		if (start >= 0 && !b.links?.some((m) => m.start < end && m.end > start))
+			out.removed.push({ start, end, target: l.target });
+	}
+	return out;
+}
 
 function wordSet(s: string) {
 	return new Set(tokenize(s.toLowerCase()).filter(isWord));
@@ -189,11 +252,15 @@ export interface Plan {
 	imagesAdded: number;
 	imagesRemoved: number;
 	imagesSwapped: number;
+	linksAdded: number;
+	linksRemoved: number;
 	changed: boolean;
 }
 
 export const blockKey = (b: Block) =>
-	[b.type, b.depth ?? 0, b.file ?? '', b.label ?? '', b.text].join('\u0000');
+	[b.type, b.depth ?? 0, b.file ?? '', b.label ?? '', b.text, b.links?.map((l) => `${l.start}:${l.end}:${l.target}`).join('|') ?? ''].join(
+		'\u0000'
+	);
 
 export function planBlocks(prev: Block[], next: Block[]): Plan {
 	const pk = prev.map(blockKey);
@@ -235,7 +302,8 @@ export function planBlocks(prev: Block[], next: Block[]): Plan {
 				continue;
 			}
 			for (; j < best; j++) items.push({ kind: 'ins', to: ins[j] });
-			items.push({ kind: 'mod', from: d, to: ins[best], words: diffWords(prev[d].text, next[ins[best]].text) });
+			const words = diffWords(prev[d].text, next[ins[best]].text);
+			items.push({ kind: 'mod', from: d, to: ins[best], words, links: diffLinks(prev[d], next[ins[best]], words) });
 			j = best + 1;
 		}
 		for (; j < ins.length; j++) items.push({ kind: 'ins', to: ins[j] });
@@ -247,6 +315,8 @@ export function planBlocks(prev: Block[], next: Block[]): Plan {
 	let imagesAdded = 0;
 	let imagesRemoved = 0;
 	let imagesSwapped = 0;
+	let linksAdded = 0;
+	let linksRemoved = 0;
 	const count = (s: string) => tokenize(s).filter(isWord).length;
 	for (const it of items) {
 		if (it.kind === 'ins') {
@@ -257,6 +327,8 @@ export function planBlocks(prev: Block[], next: Block[]): Plan {
 			else wordsRemoved += count(prev[it.from].text);
 		} else if (it.kind === 'mod') {
 			if (prev[it.from].type === 'img' && prev[it.from].file !== next[it.to].file) imagesSwapped++;
+			linksAdded += it.links.added.length;
+			linksRemoved += it.links.removed.length;
 			for (const w of it.words) {
 				if (w.t === 'ins') wordsAdded += count(w.text);
 				else if (w.t === 'del') wordsRemoved += count(w.text);
@@ -272,6 +344,8 @@ export function planBlocks(prev: Block[], next: Block[]): Plan {
 		imagesAdded,
 		imagesRemoved,
 		imagesSwapped,
+		linksAdded,
+		linksRemoved,
 		changed: items.some((it) => it.kind !== 'keep')
 	};
 }

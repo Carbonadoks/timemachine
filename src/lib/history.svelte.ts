@@ -43,6 +43,8 @@ export class History {
 	private inflight = new Map<number, Promise<void>>();
 	private abort = new AbortController();
 	private images = new Map<string, ImgInfo | null>();
+	/** Timestamp to open at, waiting for the revision list to reach it. */
+	private startAt: string | null = null;
 	private decoded = new Map<string, Promise<void>>();
 
 	constructor(
@@ -56,12 +58,36 @@ export class History {
 
 	async loadMeta() {
 		try {
-			await fetchAllRevisions(this.title, this.lang, (all) => (this.revisions = all.slice()), this.abort.signal);
+			await fetchAllRevisions(
+				this.title,
+				this.lang,
+				(all) => {
+					this.revisions = all.slice();
+					this.tryStartAt();
+				},
+				this.abort.signal
+			);
 		} catch (e) {
 			if (!this.abort.signal.aborted) this.error = (e as Error).message;
 		} finally {
 			this.loadingMeta = false;
+			this.tryStartAt();
 		}
+	}
+
+	/** Show the page as it stood at `ts` (ISO timestamp), once enough of the revision list has streamed in. */
+	seekTime(ts: string) {
+		this.startAt = ts;
+		this.tryStartAt();
+	}
+
+	private tryStartAt() {
+		const ts = this.startAt;
+		if (!ts) return;
+		const later = this.revisions.findIndex((r) => r.timestamp > ts);
+		if (later < 0 && this.loadingMeta) return; // the list hasn't reached that date yet
+		this.startAt = null;
+		this.seek((later < 0 ? this.revisions.length : later) - 1);
 	}
 
 	destroy() {

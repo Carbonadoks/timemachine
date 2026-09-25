@@ -40,6 +40,9 @@
 		articleHistory = new History(article.title, article.lang);
 		articleHistory.loadMeta();
 		if (source === 'talk') ensureTalk();
+		// ?at=<timestamp>: open the time machine on the version from that moment (links in the replay use this).
+		const at = page.url.searchParams.get('at');
+		if (at && /^\d{4}-\d\d-\d\dT[\d:]+Z$/.test(at)) history?.seekTime(at);
 		// Dev-only handle for scripted demos/tests (e.g. the how-to video recorder).
 		if (dev) (window as unknown as { __tm: unknown }).__tm = { get history() { return history; } };
 		return () => {

@@ -4,6 +4,7 @@
 // and <math>, which survives as a single token for KaTeX.
 
 import { MATH_CLOSE, MATH_OPEN, MATH_OPEN_DISPLAY } from './math';
+import { linkMark, tidy, type Link } from './links';
 
 export type BlockType = 'h2' | 'h3' | 'h4' | 'p' | 'li' | 'img' | 'fact';
 
@@ -17,6 +18,8 @@ export interface Block {
 	label?: string;
 	/** Indentation level of `:`/`*` lines (talk page threads). */
 	depth?: number;
+	/** Wiki links inside `text`. */
+	links?: Link[];
 }
 
 const FILE_NS =
@@ -229,7 +232,10 @@ function resolveLinks(s: string): string {
 			if (NON_TEXT_NS.test(inner)) return '';
 			const bar = inner.lastIndexOf('|');
 			const shown = bar >= 0 ? inner.slice(bar + 1) : inner.replace(/^:/, '').replace(/#.*$/, '');
-			return (shown || inner.replace(/^[:#]/, '').split('|')[0]) + suffix;
+			const text = (shown || inner.replace(/^[:#]/, '').split('|')[0]) + suffix;
+			// Same-page anchors ([[#Section]]) stay plain text.
+			const target = decodeEntities(inner.split('|')[0].replace(/^\s*:/, '')).replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+			return target && !target.startsWith('#') ? linkMark(text, target.charAt(0).toUpperCase() + target.slice(1)) : text;
 		});
 		if (next === s) break;
 		s = next;
@@ -332,10 +338,11 @@ export function wikitextToBlocks(src: string): Block[] {
 		para = [];
 	};
 	const push = (type: BlockType, text: string, depth = 0) => {
-		const t = text.replace(/\s+/g, ' ').trim();
+		const { text: t, links } = tidy(text);
 		if (!t || !/[\p{L}\p{N}]/u.test(t)) return;
 		const b: Block = { type, text: t };
 		if (depth > 0) b.depth = Math.min(depth, 8);
+		if (links.length) b.links = links;
 		blocks.push(b);
 	};
 
@@ -348,14 +355,15 @@ export function wikitextToBlocks(src: string): Block[] {
 		const fact = FACT_RE.exec(line);
 		if (fact) {
 			flush();
-			const text = fact[2].replace(/\s+/g, ' ').replace(/\s+([,.;])/g, '$1').trim();
-			if (text) blocks.push({ type: 'fact', label: fact[1], text });
+			const { text, links } = tidy(fact[2].replace(/\s+([,.;])/g, '$1'));
+			if (text) blocks.push({ type: 'fact', label: fact[1], text, ...(links.length ? { links } : {}) });
 			continue;
 		}
 		const img = MARK_RE.exec(line);
 		if (img) {
 			flush();
-			blocks.push({ type: 'img', file: img[1], text: img[2].replace(/\s+/g, ' ').trim() });
+			const { text, links } = tidy(img[2]);
+			blocks.push({ type: 'img', file: img[1], text, ...(links.length ? { links } : {}) });
 			continue;
 		}
 		const h = /^(={2,6})\s*(.+?)\s*\1\s*$/.exec(line);

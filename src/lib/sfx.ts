@@ -2,7 +2,7 @@
 // assets). Off by default; the dock's speaker button turns it on, which also
 // satisfies the browser's "user gesture before audio" rule.
 
-export type SfxKind = 'type' | 'pop' | 'strike' | 'crumble' | 'wobble' | 'sparkle' | 'photo' | 'flip' | 'shatter' | 'on';
+export type SfxKind = 'type' | 'pop' | 'strike' | 'crumble' | 'wobble' | 'sparkle' | 'photo' | 'flip' | 'shatter' | 'link' | 'unlink' | 'on';
 
 const PENTA = [0, 2, 4, 7, 9, 12, 14, 16];
 const KEY = 'tm-sfx';
@@ -13,7 +13,7 @@ let noiseBuf: AudioBuffer | null = null;
 let enabled = false;
 const lastAt: Partial<Record<SfxKind, number>> = {};
 // Minimum spacing per kind so dense animations don't turn into a buzz.
-const GAP: Partial<Record<SfxKind, number>> = { type: 0.045, pop: 0.06, strike: 0.09, crumble: 0.12 };
+const GAP: Partial<Record<SfxKind, number>> = { type: 0.045, pop: 0.06, strike: 0.09, crumble: 0.12, link: 0.12, unlink: 0.12 };
 
 try {
 	enabled = localStorage.getItem(KEY) === '1';
@@ -149,6 +149,21 @@ export const sfx = {
 				noise(t, 0.5, 0.3, 'highpass', 2500, 6000);
 				for (let i = 0; i < 12; i++) osc('sine', 2500 + Math.random() * 3500, 2000 + Math.random() * 3000, t + Math.random() * 0.35, 0.12, 0.05);
 				osc('sine', 120, 50, t, 0.25, 0.25);
+				break;
+			case 'link':
+				// Two metal links clicking together, then a bright little "connected" chime.
+				noise(t, 0.03, 0.2, 'bandpass', 4200, 3000, 8);
+				osc('triangle', 2350, 2300, t, 0.09, 0.07);
+				noise(t + 0.07, 0.03, 0.24, 'bandpass', 5200, 3800, 8);
+				osc('triangle', 3100, 3050, t + 0.07, 0.12, 0.07);
+				osc('sine', hz(7), hz(7), t + 0.13, 0.22, 0.08);
+				osc('sine', hz(12), hz(12), t + 0.2, 0.3, 0.08);
+				break;
+			case 'unlink':
+				// A metallic snap and a falling "bwoop".
+				noise(t, 0.05, 0.28, 'highpass', 3500, 6000);
+				osc('square', 1900, 1500, t, 0.05, 0.04);
+				osc('triangle', hz(7), hz(-5), t + 0.06, 0.28, 0.1);
 				break;
 			case 'on':
 				osc('sine', hz(0), hz(0), t, 0.18, 0.12);

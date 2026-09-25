@@ -11,13 +11,14 @@ text grew from its first draft to today as one continuous animation.
   - *insertions*: the text opens up and pushes its neighbours aside, then the new letters rain in
   - *new or removed paragraphs*: they grow open or shred and collapse
   - *images* (inline files, infobox images, galleries): new ones tumble in and "develop" like an instant photo, replaced ones flip over like a card, removed ones shatter into falling tiles
+  - *wiki links* show up as links. When someone links existing words, the words turn blue, an underline sweeps across and a chain link clicks shut. When a link is removed, it flushes red and a broken chain drops away. Click a link to pause and open that article's time machine at the same date
   - *infobox fields* appear as a fact column beside the text, and their values animate like any other text
   - an edit cursor labelled with the editor's name glides to each change, and the camera follows
 - **Timeline** (bottom): every revision as a +/- byte bar. Hover shows the editor and summary, click or drag to jump. Speed goes from 0.5× to 32×. The Daily/Monthly/Yearly steps make long histories watchable.
 
 - **Article / Talk switch**: replays the article's talk page history with the same engine; discussion threads keep their indentation.
 
-Shortcuts: `space` play/pause, `←/→` step one edit. `?view=history` opens the time machine directly, `&source=talk` starts on the talk page.
+Shortcuts: `space` play/pause, `←/→` step one edit. `?view=history` opens the time machine directly, `&source=talk` starts on the talk page, `&at=2024-03-05T22:42:30Z` opens it on the version from that moment.
 
 ## Develop
 
@@ -45,6 +46,7 @@ within its CPU and subrequest limits.
 | --- | --- |
 | `src/lib/wiki.ts` | MediaWiki API client (article, streamed revision list, batched revision content) |
 | `src/lib/wikitext.ts` | Lossy wikitext → readable paragraphs/headings/list items |
+| `src/lib/links.ts` | Wiki link markers → per-block link ranges, and rendering them as `<a>` |
 | `src/lib/diff.ts` | Myers diff, block pairing, word diff, typo detection |
 | `src/lib/animator.ts` | Imperative Web Animations engine (`Stage`) |
 | `src/lib/history.svelte.ts` | Playback controller: caching, prefetch, seek/play/step |

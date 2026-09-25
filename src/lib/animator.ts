@@ -3,9 +3,10 @@
 // Web Animations without the framework re-rendering underneath it.
 
 import type { Block } from './wikitext';
-import type { Plan, WordOp } from './diff';
+import type { LinkDiff, Plan, WordOp } from './diff';
 import { tokenize, isWord } from './diff';
 import { isMath, richText, setRichText } from './math';
+import { linkAt, linkedText, linkEl, type Link } from './links';
 import type { ImgInfo } from './wiki';
 import type { SfxKind } from './sfx';
 
@@ -119,7 +120,16 @@ export class Stage {
 	private gen = 0;
 	private cursor: HTMLElement;
 	private cursorName: HTMLElement;
-	private col = { text: '#222', ins: '#1a7f37', insBg: 'rgba(40,180,90,.2)', del: '#cf222e', fix: 'rgba(255,200,0,.55)', spark: '#f5a623' };
+	private col = {
+		text: '#222',
+		ins: '#1a7f37',
+		insBg: 'rgba(40,180,90,.2)',
+		del: '#cf222e',
+		fix: 'rgba(255,200,0,.55)',
+		spark: '#f5a623',
+		link: '#3366cc',
+		linkBg: 'rgba(51,102,204,.14)'
+	};
 
 	constructor(
 		private root: HTMLElement,
@@ -142,7 +152,9 @@ export class Stage {
 			insBg: v('--tm-ins-bg', this.col.insBg),
 			del: v('--tm-del', this.col.del),
 			fix: v('--tm-fix', this.col.fix),
-			spark: v('--tm-spark', this.col.spark)
+			spark: v('--tm-spark', this.col.spark),
+			link: v('--tm-link', this.col.link),
+			linkBg: v('--tm-link-bg', this.col.linkBg)
 		};
 	}
 
@@ -234,7 +246,7 @@ export class Stage {
 		for (const b of this.dirty) {
 			if (!b.el.isConnected) continue;
 			// Images keep their <img> (no reload flicker); only the text is reset.
-			setRichText(this.textBox(b.el), b.text);
+			this.textBox(b.el).replaceChildren(linkedText(b.text, b.links));
 			b.el.removeAttribute('style');
 			b.el.querySelector('figure')?.removeAttribute('style');
 			b.el.className = this.blockClass(b);
@@ -255,18 +267,20 @@ export class Stage {
 		el.textContent = '';
 		if (b.type === 'img') {
 			const fig = h('figure', 'tm-fig');
-			const cap = h('figcaption', 'tm-cap', b.text);
+			const cap = h('figcaption', 'tm-cap');
+			cap.append(linkedText(b.text, b.links));
 			fig.append(this.frame(b.file!), cap);
 			el.append(fig);
 			return cap;
 		}
 		if (b.type === 'fact') {
 			if (b.label) el.append(h('span', 'fact-label', b.label));
-			const v = h('span', 'fact-value', b.text);
+			const v = h('span', 'fact-value');
+			v.append(linkedText(b.text, b.links));
 			el.append(v);
 			return v;
 		}
-		setRichText(el, b.text);
+		el.append(linkedText(b.text, b.links));
 		return el;
 	}
 
@@ -395,6 +409,7 @@ export class Stage {
 				const nb = next[it.to];
 				const b: Live = { ...nb, el: prev[it.from].el };
 				const oldFile = prev[it.from].file ?? '';
+				const oldLinks = prev[it.from].links;
 				live.push(b);
 				itemEls.push(b.el);
 				steps.push({
@@ -402,8 +417,8 @@ export class Stage {
 					build: () => {
 						b.el.className = this.blockClass(nb);
 						this.dirty.push(b);
-						if (nb.type === 'img') return this.imgMod(oldFile, b, it.words, detail);
-						return this.blockMod(b, it.words, detail, this.textBox(b.el));
+						if (nb.type === 'img') return this.imgMod(oldFile, b, it.words, detail, oldLinks, it.links);
+						return this.blockMod(b, it.words, detail, this.textBox(b.el), oldLinks, it.links);
 					}
 				});
 			}
@@ -450,19 +465,37 @@ export class Stage {
 
 	// ─── block-level jobs ───────────────────────────────────────────────────
 
+	/** Refill `box` with one span per word (inside its link, if any); returns the spans. */
+	private wordSpans(box: HTMLElement, b: Block) {
+		box.textContent = '';
+		const words: HTMLElement[] = [];
+		let pos = 0;
+		let a: HTMLElement | null = null;
+		let aLink: Link | undefined;
+		for (const t of tokenize(b.text)) {
+			const link = linkAt(b.links, pos, pos + t.length);
+			pos += t.length;
+			if (link !== aLink) {
+				aLink = link;
+				a = link ? linkEl(link.target) : null;
+				if (a) box.append(a);
+			}
+			const parent = a ?? box;
+			if (t.trim()) {
+				const s = h('span', 'w', t);
+				parent.append(s);
+				words.push(s);
+			} else parent.append(t);
+		}
+		return words;
+	}
+
 	private blockIns(b: Live, detail: Detail): Job {
 		const el = b.el;
 		const box = this.renderBlock(el, b);
 		const words: HTMLElement[] = [];
 		if (detail !== 'coarse' && b.text.length / 6 < 160) {
-			box.textContent = '';
-			for (const t of tokenize(b.text)) {
-				if (t.trim()) {
-					const s = h('span', 'w', t);
-					box.append(s);
-					words.push(s);
-				} else box.append(t);
-			}
+			words.push(...this.wordSpans(box, b));
 		}
 		let height = 0;
 		let mt = '0px';
@@ -530,15 +563,7 @@ export class Stage {
 		const el = b.el;
 		const words: HTMLElement[] = [];
 		if (detail !== 'coarse' && b.text.length / 6 < 160) {
-			const box = this.textBox(el);
-			box.textContent = '';
-			for (const t of tokenize(b.text)) {
-				if (t.trim()) {
-					const s = h('span', 'w', t);
-					box.append(s);
-					words.push(s);
-				} else box.append(t);
-			}
+			words.push(...this.wordSpans(this.textBox(el), b));
 		}
 		let height = 0;
 		let mt = '0px';
@@ -553,6 +578,7 @@ export class Stage {
 				mb = cs.marginBottom;
 			},
 			apply: () => {
+				el.classList.add('blk-dying');
 				el.style.textDecorationLine = 'line-through';
 				el.style.textDecorationThickness = '.09em';
 			},
@@ -790,9 +816,9 @@ export class Stage {
 	}
 
 	/** Same slot, different file: the card flips over to reveal the new picture. */
-	private imgMod(oldFile: string, b: Live, ops: WordOp[], detail: Detail): Job {
+	private imgMod(oldFile: string, b: Live, ops: WordOp[], detail: Detail, oldLinks?: Link[], links?: LinkDiff): Job {
 		const el = b.el;
-		const job = this.blockMod(b, ops, detail, this.textBox(el));
+		const job = this.blockMod(b, ops, detail, this.textBox(el), oldLinks, links);
 		if (oldFile === b.file) return job;
 		const fig = el.querySelector('figure') as HTMLElement;
 		const oldFrame = fig.querySelector('.tm-frame') as HTMLElement;
@@ -834,9 +860,18 @@ export class Stage {
 
 	// ─── word-level edits inside a paragraph ────────────────────────────────
 
-	private blockMod(b: Live, ops: WordOp[], detail: Detail, box: HTMLElement = b.el): Job {
+	private blockMod(
+		b: Live,
+		ops: WordOp[],
+		detail: Detail,
+		box: HTMLElement = b.el,
+		oldLinks?: Link[],
+		links: LinkDiff = { added: [], removed: [] }
+	): Job {
 		const el = b.el;
 		box.textContent = '';
+		let o = 0; // offsets into the old and new text
+		let n = 0;
 		interface Tok {
 			op: WordOp;
 			span: HTMLElement;
@@ -848,10 +883,22 @@ export class Stage {
 		const toks: Tok[] = [];
 		ops.forEach((op, pos) => {
 			if (op.t === 'eq') {
-				box.append(richText(op.text));
+				box.append(linkedText(b.text, b.links, n, n + op.text.length, links.removed));
+				o += op.text.length;
+				n += op.text.length;
 				return;
 			}
 			const text = op.t === 'fix' ? op.from : op.text;
+			let link: Link | undefined;
+			if (op.t === 'del') {
+				link = linkAt(oldLinks, o, o + text.length);
+				o += text.length;
+			} else {
+				const len = op.t === 'fix' ? op.to.length : text.length;
+				link = linkAt(b.links, n, n + len);
+				n += len;
+				o += op.t === 'fix' ? text.length : 0;
+			}
 			const span = h('span', `tk tk-${op.t}`);
 			const blank = !text.trim();
 			if (blank) span.classList.add('tk-space');
@@ -859,7 +906,11 @@ export class Stage {
 				op.t === 'fix' || (detail === 'full' && !blank && text.length <= 40 && !isMath(text))
 					? splitLetters(span, text)
 					: (setRichText(span, text), []);
-			box.append(span);
+			if (link) {
+				const a = linkEl(link.target);
+				a.append(span);
+				box.append(a);
+			} else box.append(span);
 			toks.push({ op, span, pos, chars, w0: 0 });
 		});
 
@@ -890,9 +941,15 @@ export class Stage {
 			units.push(u);
 		}
 
+		// Link changes on text that stayed: every piece of each link animates together.
+		const linkGroups = [
+			...links.added.map((i) => ({ add: true, els: [...box.querySelectorAll<HTMLElement>(`a[data-li="${i}"]`)] })),
+			...links.removed.map((_, i) => ({ add: false, els: [...box.querySelectorAll<HTMLElement>(`.tm-unlink[data-ui="${i}"]`)] }))
+		].filter((g) => g.els.length);
+
 		return {
 			el,
-			anchor: () => toks[0]?.span ?? el,
+			anchor: () => toks[0]?.span ?? linkGroups[0]?.els[0] ?? el,
 			measure: () => {
 				for (const t of toks) {
 					t.w0 = t.span.getBoundingClientRect().width;
@@ -922,6 +979,12 @@ export class Stage {
 					}
 					if (u.ins.length) end = Math.max(end, this.insTokens(u.ins, tIns, detail));
 				});
+				const lstep = Math.min(220, 1400 / Math.max(1, linkGroups.length));
+				const t1 = units.length ? T + 200 : T;
+				linkGroups.forEach((g, k) => {
+					const at = t1 + k * lstep;
+					end = Math.max(end, g.add ? this.linkOn(g.els, at, detail) : this.linkOff(g.els, at, detail));
+				});
 				return end;
 			}
 		};
@@ -949,7 +1012,7 @@ export class Stage {
 			}
 			const line = h('i', 'strike');
 			span.append(line);
-			this.anim(span, [{ color: this.col.text }, { color: this.col.del }], { duration: 200, delay: at, end: 'keep' });
+			this.anim(span, [{ color: this.rest(span) }, { color: this.col.del }], { duration: 200, delay: at, end: 'keep' });
 			this.anim(line, [{ transform: 'scaleX(0)', opacity: 1 }, { transform: 'scaleX(1)', opacity: 1 }], {
 				duration: 260,
 				delay: at,
@@ -1004,7 +1067,7 @@ export class Stage {
 					[
 						{ color: this.col.ins, backgroundColor: this.col.insBg },
 						{ color: this.col.ins, backgroundColor: this.col.insBg, offset: 0.5 },
-						{ color: this.col.text, backgroundColor: 'transparent' }
+						{ color: this.rest(span), backgroundColor: 'transparent' }
 					],
 					{ duration: 2400, delay: at, easing: 'linear' }
 				);
@@ -1038,6 +1101,87 @@ export class Stage {
 			}
 		});
 		return end;
+	}
+
+	/** Resting text colour of `el`: link blue inside a link. */
+	private rest(el: Element) {
+		return el.closest('.tm-link') ? this.col.link : this.col.text;
+	}
+
+	// ─── links ──────────────────────────────────────────────────────────────
+
+	private chain(broken: boolean) {
+		const i = h('i', broken ? 'tm-chain broken' : 'tm-chain');
+		i.innerHTML =
+			'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>';
+		return i;
+	}
+
+	/** Plain words become a link: they turn blue, an underline sweeps across and a chain link clicks shut. */
+	private linkOn(els: HTMLElement[], T: number, detail: Detail) {
+		const quick = detail === 'coarse';
+		const dur = quick ? 500 : 1500;
+		this.sound('link', T + (quick ? 0 : 260));
+		els.forEach((a, k) => {
+			const at = T + k * 90;
+			this.anim(
+				a,
+				[
+					{ color: this.col.text, backgroundSize: '0% 2px', backgroundColor: 'transparent' },
+					{ color: this.col.link, backgroundSize: '100% 2px', backgroundColor: this.col.linkBg, offset: 0.3 },
+					{ color: this.col.link, backgroundSize: '100% 2px', backgroundColor: this.col.linkBg, offset: 0.7 },
+					{ color: this.col.link, backgroundSize: '100% 0px', backgroundColor: 'transparent' }
+				],
+				{ duration: dur, delay: at, easing: 'ease-out' }
+			);
+		});
+		if (quick) return T + dur;
+		const c = this.chain(false);
+		els[0].append(c);
+		this.anim(
+			c,
+			[
+				{ opacity: 0, transform: 'translate(-50%, 40%) scale(.2) rotate(-90deg)' },
+				{ opacity: 1, transform: 'translate(-50%, -70%) scale(1.25) rotate(12deg)', offset: 0.3 },
+				{ opacity: 1, transform: 'translate(-50%, -60%) scale(.95) rotate(-4deg)', offset: 0.45 },
+				{ opacity: 1, transform: 'translate(-50%, -62%) scale(1) rotate(0deg)', offset: 0.75 },
+				{ opacity: 0, transform: 'translate(-50%, -140%) scale(.8) rotate(0deg)' }
+			],
+			{ duration: 1400, delay: T + 60, easing: 'ease-out', end: 'remove' }
+		);
+		return T + Math.max(dur, 1460) + (els.length - 1) * 90;
+	}
+
+	/** A link is removed: it flushes red, the underline snaps back and a broken chain drops away. */
+	private linkOff(els: HTMLElement[], T: number, detail: Detail) {
+		const quick = detail === 'coarse';
+		const dur = quick ? 500 : 1300;
+		this.sound('unlink', T + (quick ? 0 : 200));
+		for (const e of els)
+			this.anim(
+				e,
+				[
+					{ color: this.col.link, backgroundSize: '100% 2px' },
+					{ color: this.col.del, backgroundSize: '100% 2px', offset: 0.25 },
+					{ color: this.col.del, backgroundSize: '100% 2px', offset: 0.4 },
+					{ color: this.col.text, backgroundSize: '0% 2px' }
+				],
+				{ duration: dur, delay: T, easing: 'ease-in-out' }
+			);
+		if (quick) return T + dur;
+		const c = this.chain(true);
+		els[0].append(c);
+		this.anim(
+			c,
+			[
+				{ opacity: 0, transform: 'translate(-50%, -60%) scale(.6)', offset: 0 },
+				{ opacity: 1, transform: 'translate(-50%, -70%) scale(1.1)', offset: 0.2 },
+				{ opacity: 1, transform: 'translate(-50%, -70%) scale(1) rotate(0deg)', offset: 0.35 },
+				{ opacity: 0, transform: `translate(calc(-50% + ${rnd(-30, 30)}px), 120%) rotate(${rnd(-200, 200)}deg) scale(.8)` }
+			],
+			{ duration: 1100, delay: T, easing: 'cubic-bezier(.5,0,.8,.6)', end: 'remove' }
+		);
+		return T + Math.max(dur, 1100);
 	}
 
 	// ─── the whacky typo fix ────────────────────────────────────────────────
@@ -1186,7 +1330,7 @@ export class Stage {
 					{ opacity: 1, transform: 'translateY(0) scaleX(1.45) scaleY(.6)', color: this.col.ins, offset: 0.55 },
 					{ opacity: 1, transform: `translateY(${-fontPx * 0.25}px) scaleX(.85) scaleY(1.2)`, color: this.col.ins, offset: 0.75 },
 					{ opacity: 1, transform: 'none', color: this.col.ins, offset: 0.9 },
-					{ opacity: 1, transform: 'none', color: this.col.text }
+					{ opacity: 1, transform: 'none', color: this.rest(span) }
 				],
 				{ duration: quick ? 400 : 1000, delay: act + 260 + k++ * 90, easing: 'ease-out' }
 			);
