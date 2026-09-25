@@ -9,6 +9,13 @@
 
 	let { history }: { history: History } = $props();
 
+	// Preload the edit the pointer rests on (not every row it sweeps past).
+	let warmTimer: ReturnType<typeof setTimeout>;
+	function warmSoon(i: number) {
+		clearTimeout(warmTimer);
+		warmTimer = setTimeout(() => history.warm(i), 150);
+	}
+
 	let root: HTMLDivElement;
 	let content: HTMLDivElement;
 
@@ -132,7 +139,8 @@
 					style:transform="translateY({(n - 1 - i) * ROW}px)"
 					class:pending={i === history.pending}
 					onclick={() => history.playEdit(i)}
-					onmouseenter={() => history.warm(i)}
+					onmouseenter={() => warmSoon(i)}
+					onmouseleave={() => clearTimeout(warmTimer)}
 					title="Replay this edit"
 				>
 					<span class="row-top">

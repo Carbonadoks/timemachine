@@ -243,6 +243,27 @@ button {
 	display: inline-block;
 	white-space: pre;
 }
+/* <math> rendered by KaTeX (src/lib/math.ts) */
+.tm-math {
+	white-space: normal;
+}
+.tm-math .katex {
+	font-size: 1.08em;
+}
+.tm-math-display {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+	overflow-y: hidden;
+	text-align: center;
+}
+.tm-math-display .katex-display {
+	margin: 0.4em 0;
+}
+.tm-math-src {
+	font-family: ui-monospace, monospace;
+	font-size: 0.85em;
+}
 .tk {
 	position: relative;
 	vertical-align: baseline;

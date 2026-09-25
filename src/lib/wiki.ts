@@ -23,7 +23,7 @@ export interface Article {
 	revid: number;
 }
 
-const UA = 'WikiTimeMachine/1.0 (Wikipedia history viewer; Cloudflare Pages)';
+const UA = 'WikiTimeMachine/1.0 (https://timemachine.carbonadoks.com; https://github.com/Carbonadoks/timemachine)';
 
 /** The page genuinely does not exist (as opposed to a network/rate-limit failure). */
 export class MissingPage extends Error {}
@@ -34,6 +34,27 @@ export function apiBase(lang: string) {
 
 export function sanitizeLang(lang: string | null | undefined) {
 	return lang && /^[a-z-]{2,12}$/.test(lang) ? lang : 'en';
+}
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve, reject) => {
+		const t = setTimeout(resolve, ms);
+		signal?.addEventListener('abort', () => (clearTimeout(t), reject(signal.reason)), { once: true });
+	});
+
+/** Wikipedia asked us to slow down (rate limit, overload or replication lag). */
+class Throttled extends Error {
+	constructor(
+		msg: string,
+		readonly retryAfter: number | null
+	) {
+		super(msg);
+	}
+}
+
+function retryAfter(res: Response) {
+	const s = Number(res.headers.get('Retry-After'));
+	return Number.isFinite(s) && s > 0 ? Math.min(s, 30) * 1000 : null;
 }
 
 async function api(
@@ -47,20 +68,37 @@ async function api(
 		format: 'json',
 		formatversion: '2',
 		origin: '*',
+		// Back off when Wikipedia's database replicas lag, as the API etiquette asks.
+		maxlag: '5',
 		...params
 	}))
 		url.searchParams.set(k, v);
+	const browser = typeof window !== 'undefined';
 	const headers: Record<string, string> = {};
-	// Browsers refuse a custom UA; only set it when running on the server/worker.
-	if (typeof window === 'undefined') headers['User-Agent'] = UA;
-	const res = await f(url, { headers, signal });
-	if (!res.ok) throw new Error(`Wikipedia API ${res.status}`);
-	const json = await res.json();
-	if (json.error) {
-		const Err = json.error.code === 'missingtitle' || json.error.code === 'invalidtitle' ? MissingPage : Error;
-		throw new Err(json.error.info ?? 'Wikipedia API error');
+	// Browsers refuse a custom User-Agent; Wikimedia reads Api-User-Agent instead.
+	headers[browser ? 'Api-User-Agent' : 'User-Agent'] = UA;
+	// On the server a slow retry would hold up the page; the browser takes over instead.
+	const retries = browser ? 4 : 0;
+	for (let attempt = 0; ; attempt++) {
+		try {
+			const res = await f(url, { headers, signal });
+			if (res.status === 429 || res.status === 503) throw new Throttled(`Wikipedia API ${res.status}`, retryAfter(res));
+			if (!res.ok) throw new Error(`Wikipedia API ${res.status}`);
+			const json = await res.json();
+			if (json.error?.code === 'maxlag') throw new Throttled('Wikipedia is under load', retryAfter(res) ?? 5000);
+			if (json.error) {
+				const Err = json.error.code === 'missingtitle' || json.error.code === 'invalidtitle' ? MissingPage : Error;
+				throw new Err(json.error.info ?? 'Wikipedia API error');
+			}
+			return json;
+		} catch (e) {
+			// A 429 without CORS headers surfaces as a TypeError, so network errors get the same treatment.
+			const transient = e instanceof Throttled || e instanceof TypeError;
+			if (!transient || attempt >= retries || signal?.aborted) throw e;
+			const wait = (e instanceof Throttled && e.retryAfter) || 1000 * 2 ** attempt;
+			await sleep(wait + Math.random() * 250, signal);
+		}
 	}
-	return json;
 }
 
 /** Rewrite links inside parsed HTML so they stay inside the wrapper. */

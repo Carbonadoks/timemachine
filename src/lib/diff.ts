@@ -1,3 +1,4 @@
+import { isMath } from './math';
 import type { Block } from './wikitext';
 
 type Edit = [kind: 0 | 1 | 2, ai: number, bi: number]; // 0 = equal, 1 = delete, 2 = insert
@@ -74,7 +75,8 @@ export function myers<T>(a: T[], b: T[], eq: (x: T, y: T) => boolean = (x, y) =>
 
 // ─── words ────────────────────────────────────────────────────────────────
 
-const TOKEN_RE = /[\p{L}\p{N}\p{M}]+(?:['’\-.][\p{L}\p{N}\p{M}]+)*|\s+|[^\s]/gsu;
+// A whole <math> token (see math.ts) comes first so it is never split.
+const TOKEN_RE = /[\u000E\u0011][^\u000F]*\u000F|[\p{L}\p{N}\p{M}]+(?:['’\-.][\p{L}\p{N}\p{M}]+)*|\s+|[^\s]/gsu;
 export const tokenize = (s: string) => s.match(TOKEN_RE) ?? [];
 export const isWord = (t: string) => /[\p{L}\p{N}]/u.test(t);
 
@@ -94,7 +96,7 @@ export function levenshtein(a: string, b: string): number {
 
 /** Is `b` plausibly a small correction of `a` (typo, case, transposition)? */
 export function isTypoFix(a: string, b: string) {
-	if (!isWord(a) || !isWord(b) || a.length > 30 || b.length > 30) return false;
+	if (!isWord(a) || !isWord(b) || isMath(a) || isMath(b) || a.length > 30 || b.length > 30) return false;
 	if (a.toLowerCase() === b.toLowerCase()) return true;
 	const d = levenshtein(a.toLowerCase(), b.toLowerCase());
 	const sorted = (s: string) => [...s.toLowerCase()].sort().join('');

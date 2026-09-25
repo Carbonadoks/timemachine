@@ -80,7 +80,7 @@
 	}
 	function seek(i: number) {
 		openMachine();
-		history?.seek(i);
+		history?.playFrom(i);
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -131,6 +131,7 @@
 				<footer class="credit">
 					Content from <a href={wikiUrl} target="_blank" rel="noopener">Wikipedia</a>, licensed under
 					<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+					<a href="https://github.com/Carbonadoks/timemachine" target="_blank" rel="noopener">Source on GitHub</a>.
 				</footer>
 			</div>
 		{:else if history}

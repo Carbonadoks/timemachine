@@ -5,6 +5,7 @@
 import type { Block } from './wikitext';
 import type { Plan, WordOp } from './diff';
 import { tokenize, isWord } from './diff';
+import { isMath, richText, setRichText } from './math';
 import type { ImgInfo } from './wiki';
 import type { SfxKind } from './sfx';
 
@@ -45,7 +46,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 function h(tag: string, cls: string, text?: string) {
 	const e = document.createElement(tag);
 	e.className = cls;
-	if (text != null) e.textContent = text;
+	if (text != null) e.append(richText(text));
 	return e;
 }
 
@@ -233,7 +234,7 @@ export class Stage {
 		for (const b of this.dirty) {
 			if (!b.el.isConnected) continue;
 			// Images keep their <img> (no reload flicker); only the text is reset.
-			this.textBox(b.el).textContent = b.text;
+			setRichText(this.textBox(b.el), b.text);
 			b.el.removeAttribute('style');
 			b.el.querySelector('figure')?.removeAttribute('style');
 			b.el.className = this.blockClass(b);
@@ -265,7 +266,7 @@ export class Stage {
 			el.append(v);
 			return v;
 		}
-		el.textContent = b.text;
+		setRichText(el, b.text);
 		return el;
 	}
 
@@ -847,7 +848,7 @@ export class Stage {
 		const toks: Tok[] = [];
 		ops.forEach((op, pos) => {
 			if (op.t === 'eq') {
-				box.append(op.text);
+				box.append(richText(op.text));
 				return;
 			}
 			const text = op.t === 'fix' ? op.from : op.text;
@@ -855,9 +856,9 @@ export class Stage {
 			const blank = !text.trim();
 			if (blank) span.classList.add('tk-space');
 			const chars =
-				op.t === 'fix' || (detail === 'full' && !blank && text.length <= 40)
+				op.t === 'fix' || (detail === 'full' && !blank && text.length <= 40 && !isMath(text))
 					? splitLetters(span, text)
-					: ((span.textContent = text), []);
+					: (setRichText(span, text), []);
 			box.append(span);
 			toks.push({ op, span, pos, chars, w0: 0 });
 		});

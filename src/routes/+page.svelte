@@ -123,6 +123,10 @@
 			<div class="tm-content demo-content" bind:this={content}></div>
 		</div>
 	</section>
+
+	<footer class="foot">
+		<a href="https://github.com/Carbonadoks/timemachine" target="_blank" rel="noopener">Source on GitHub ↗</a>
+	</footer>
 </main>
 
 <style>
@@ -268,6 +272,16 @@
 	}
 	.demo-content :global(.blk-img) {
 		width: 190px;
+	}
+	.foot {
+		margin-top: 40px;
+		font-size: 13px;
+	}
+	.foot a {
+		color: var(--muted);
+	}
+	.foot a:hover {
+		color: var(--text);
 	}
 	.demo-content {
 		padding: 44px 30px 30px;

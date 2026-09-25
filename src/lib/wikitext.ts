@@ -1,6 +1,9 @@
 // Turns raw wikitext into a list of readable blocks. It is intentionally
 // lossy: templates, tables and refs vanish so the animation focuses on the
-// prose people read, plus the images (inline files, infobox images, galleries).
+// prose people read, plus the images (inline files, infobox images, galleries)
+// and <math>, which survives as a single token for KaTeX.
+
+import { MATH_CLOSE, MATH_OPEN, MATH_OPEN_DISPLAY } from './math';
 
 export type BlockType = 'h2' | 'h3' | 'h4' | 'p' | 'li' | 'img' | 'fact';
 
@@ -271,11 +274,38 @@ function decodeEntities(s: string) {
 	});
 }
 
+/**
+ * Swap <math>/<chem> for placeholders so later passes ({{…}} stripping, '' bold,
+ * tag removal) can't eat the LaTeX; `restore` puts the finished tokens back.
+ */
+function hideMath(s: string) {
+	const tokens: string[] = [];
+	const put = (open: string, tex: string) => {
+		tokens.push(open + tex.replace(/[\u0000-\u001f]+/g, ' ') + MATH_CLOSE);
+		return `\u0012${tokens.length - 1}\u0013`;
+	};
+	s = s.replace(/\{\{\s*=\s*\}\}/g, '=');
+	// {{tmath|…}} is LaTeX too; {{math|…}}/{{mvar|…}} are plain formatted text, keep their content.
+	s = s.replace(/\{\{\s*tmath\s*\|(?:\s*1\s*=)?((?:[^{}]|\{[^{}]*\})*)\}\}/gi, (_m, tex: string) =>
+		tex.trim() ? put(MATH_OPEN, decodeEntities(tex).trim()) : ''
+	);
+	s = s.replace(/\{\{\s*(?:math|mvar)\s*\|(?:\s*1\s*=)?([^{}]*)\}\}/gi, '$1');
+	s = s.replace(/<(math|chem|ce)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi, (_m, tag: string, attrs: string, body: string) => {
+		let tex = decodeEntities(body).trim();
+		if (!tex) return '';
+		if (tag.toLowerCase() !== 'math' || /\bchem\b/i.test(attrs)) tex = `\\ce{${tex}}`;
+		return put(/display\s*=\s*["']?block/i.test(attrs) ? MATH_OPEN_DISPLAY : MATH_OPEN, tex);
+	});
+	return { s, restore: (t: string) => t.replace(/\u0012(\d+)\u0013/g, (_m, i: string) => tokens[+i]) };
+}
+
 export function wikitextToBlocks(src: string): Block[] {
 	let s = src.replace(/\r\n?/g, '\n');
 	s = s.replace(/<!--[\s\S]*?(-->|$)/g, '');
 	s = s.replace(/<ref\b[^>]*\/>/gi, '');
 	s = s.replace(/<ref\b[^>]*>[\s\S]*?<\/ref\s*>/gi, '');
+	const math = hideMath(s);
+	s = math.s;
 	s = galleries(s);
 	s = s
 		.replace(/\{\{\s*(nbsp|space|spaces|thinsp|nbhyph)\s*(\|[^}]*)?\}\}/gi, ' ')
@@ -293,7 +323,7 @@ export function wikitextToBlocks(src: string): Block[] {
 	s = s.replace(/<br\s*\/?>/gi, ' ');
 	s = s.replace(/<\/?[a-zA-Z][^>]*>/g, '');
 	s = s.replace(/__[A-Z]+__/g, '');
-	s = decodeEntities(s);
+	s = math.restore(decodeEntities(s));
 
 	const blocks: Block[] = [];
 	let para: string[] = [];

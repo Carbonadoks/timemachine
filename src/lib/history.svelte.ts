@@ -1,5 +1,6 @@
 import { fetchAllRevisions, fetchImageInfo, fetchRevisionContents, type ImgInfo, type RevisionMeta } from './wiki';
 import { wikitextToBlocks, type Block } from './wikitext';
+import { hasMath, loadMath } from './math';
 import { planBlocks, type Plan } from './diff';
 import type { Stage } from './animator';
 
@@ -74,7 +75,7 @@ export class History {
 		this.stage = stage;
 		stage.speed = this.speed;
 		stage.images = this.images;
-		await this.seek(this.index);
+		await this.seek(this.pending ?? this.index); // a jump requested before the stage existed wins
 	}
 
 	/** The stage is going away (view switched): stop and forget it. */
@@ -134,6 +135,7 @@ export class History {
 			waits.push(p);
 		}
 		await Promise.all(waits);
+		this.error = null; // Wikipedia is answering again: drop any earlier warning
 	}
 
 	/** Keep a window of upcoming revisions downloading in the background, in small batches. */
@@ -194,8 +196,9 @@ export class History {
 		return [];
 	}
 
-	/** Look up thumbnails for any new files and wait (briefly) for them to decode. */
+	/** Load KaTeX if needed, look up thumbnails for any new files and wait (briefly) for them to decode. */
 	private async prepareImages(blocks: Block[], waitDecode = true) {
+		if (blocks.some((b) => hasMath(b.text))) await loadMath();
 		const files = [...new Set(blocks.filter((b) => b.type === 'img').map((b) => b.file!))];
 		const unknown = files.filter((f) => !this.images.has(f));
 		if (unknown.length) {
@@ -219,6 +222,12 @@ export class History {
 			return p;
 		});
 		await Promise.race([Promise.all(loads), new Promise((r) => setTimeout(r, 1500))]);
+	}
+
+	/** Jump to revision `i` and play on from there. */
+	playFrom(i: number) {
+		this.playing = true;
+		return this.seek(i);
 	}
 
 	/** Jump straight to revision `i` without animating. Keeps playing if we were. */
